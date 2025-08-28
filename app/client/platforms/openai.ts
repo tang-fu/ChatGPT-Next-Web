@@ -201,6 +201,7 @@ export class ChatGPTApi implements LLMApi {
       options.config.model.startsWith("o3") ||
       options.config.model.startsWith("o4-mini");
     const isGpt5 =  options.config.model.startsWith("gpt-5");
+    const needNoStream = /^gpt-5($|-mini\b)/.test(options.config.model);
     if (isDalle3) {
       const prompt = getMessageTextContent(
         options.messages.slice(-1)?.pop() as any,
@@ -257,6 +258,10 @@ export class ChatGPTApi implements LLMApi {
         // o1/o3 uses max_completion_tokens to control the number of tokens (https://platform.openai.com/docs/guides/reasoning#controlling-costs)
         requestPayload["max_completion_tokens"] = modelConfig.max_tokens;
       }
+      // ✅ 强制 gpt-5 / gpt-5-mini 走非流式：删除 stream 字段
+       if (needNoStream) {
+         delete (requestPayload as any).stream;
+       }
 
 
       // add max_tokens to vision model
@@ -267,7 +272,7 @@ export class ChatGPTApi implements LLMApi {
 
     console.log("[Request] openai payload: ", requestPayload);
 
-    const shouldStream = !isDalle3 && !!options.config.stream;
+    const shouldStream = !isDalle3 && !!options.config.stream && !needNoStream;
     const controller = new AbortController();
     options.onController?.(controller);
 
