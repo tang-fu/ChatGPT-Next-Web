@@ -200,11 +200,21 @@ export class ChatGPTApi implements LLMApi {
       options.config.model.startsWith("o1") ||
       options.config.model.startsWith("o3") ||
       options.config.model.startsWith("o4-mini");
-    const isGpt5 =  options.config.model.startsWith("gpt-5");
-    //******************************************************************************/
-    //仅对 gpt-5 / gpt-5-mini 禁用流式；不波及 gpt-5-nano
-    const needNoStream = /^gpt-5($|-mini\b)/.test(options.config.model);
-    //******************************************************************************/
+    //**********************************************修改部分***********************************************/
+    const modelName = options.config.model.toLowerCase().trim();
+    const shortName = modelName
+      .replace(/@.+$/, "")                  // 去掉 @azure-deploy 等
+      .replace(/:(latest|preview)$/, "")    // 去掉 :latest
+      .replace(/-(latest|preview|\d{4}-\d{2}-\d{2})$/, ""); // 去掉 -latest / -2025-05-27
+
+    // 仅这两种“禁流”
+    const isGpt5Core = shortName === "gpt-5" || shortName === "gpt-5-mini";
+    const needNoStream = isGpt5Core;
+
+    // nano 判断（如需用）
+    const isGpt5Nano = shortName.startsWith("gpt-5-nano");
+    const isGpt5Family = shortName.startsWith("gpt-5");
+    //******************************************************************************************************/
     if (isDalle3) {
       const prompt = getMessageTextContent(
         options.messages.slice(-1)?.pop() as any,
@@ -235,21 +245,21 @@ export class ChatGPTApi implements LLMApi {
         messages,
         stream: options.config.stream,
         model: modelConfig.model,
-        temperature: (!isO1OrO3 && !isGpt5) ? modelConfig.temperature : 1,
-        presence_penalty: !isO1OrO3 ? modelConfig.presence_penalty : 0,
-        frequency_penalty: !isO1OrO3 ? modelConfig.frequency_penalty : 0,
-        top_p: !isO1OrO3 ? modelConfig.top_p : 1,
+        //*****************************************修改部分*******************************************/
+        //temperature: (!isO1OrO3 && !isGpt5Core) ? modelConfig.temperature : 1,
+        //presence_penalty: !isO1OrO3 ? modelConfig.presence_penalty : 0,
+        //frequency_penalty: !isO1OrO3 ? modelConfig.frequency_penalty : 0,
+        //top_p: !isO1OrO3 ? modelConfig.top_p : 1,
+        temperature: !(isO1OrO3 || isGpt5Family) ? modelConfig.temperature : 1,
+        presence_penalty: !(isO1OrO3 || isGpt5Family) ? modelConfig.presence_penalty : 0,
+        frequency_penalty: !(isO1OrO3 || isGpt5Family) ? modelConfig.frequency_penalty : 0,
+        top_p: !(isO1OrO3 || isGpt5Family) ? modelConfig.top_p : 1,
+        //****************************************************************************************/
         // max_tokens: Math.max(modelConfig.max_tokens, 1024),
         // Please do not ask me why not send max_tokens, no reason, this param is just shit, I dont want to explain anymore.
       };
 
-      if (isGpt5) {
-  	// Remove max_tokens if present
-  	delete requestPayload.max_tokens;
-  	// Add max_completion_tokens (or max_completion_tokens if that's what you meant)
-  	requestPayload["max_completion_tokens"] = modelConfig.max_tokens;
-
-      } else if (isO1OrO3) {
+        if (isO1OrO3) {
         // by default the o1/o3 models will not attempt to produce output that includes markdown formatting
         // manually add "Formatting re-enabled" developer message to encourage markdown inclusion in model responses
         // (https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/reasoning?tabs=python-secure#markdown-output)
@@ -261,24 +271,43 @@ export class ChatGPTApi implements LLMApi {
         // o1/o3 uses max_completion_tokens to control the number of tokens (https://platform.openai.com/docs/guides/reasoning#controlling-costs)
         requestPayload["max_completion_tokens"] = modelConfig.max_tokens;
       }
-      /******************************************************************************/
-      // ✅ 强制 gpt-5 / gpt-5-mini 走非流式：删除 stream 字段
-      if (needNoStream) {
-        delete (requestPayload as any).stream;
-      }
-      /******************************************************************************/
+      
+        // ✅ gpt-5*（含 nano）与 o1/o3 统一改用 max_completion_tokens
+        if (isGpt5Family || isO1OrO3) {
+          delete (requestPayload as any).max_tokens;
+          (requestPayload as any).max_completion_tokens = modelConfig.max_tokens;
+        }
 
 
       // add max_tokens to vision model
-      if (visionModel && !isO1OrO3 && ! isGpt5) {
+      if (visionModel && !isO1OrO3 && ! isGpt5Family) {
         requestPayload["max_tokens"] = Math.max(modelConfig.max_tokens, 4000);
       }
     }
 
     console.log("[Request] openai payload: ", requestPayload);
+    //****************************************************************************************/
+    //const shouldStream = !isDalle3 && !!options.config.stream && !needNoStream;
+    if (needNoStream) {
+      delete (requestPayload as any).stream;
+    }
+    
+    // 这里补回
+    const effectiveStream =
+      "stream" in (requestPayload as any)
+        ? !!(requestPayload as any).stream
+        : !!options.config.stream;
+    
+    const shouldStream = !isDalle3 && effectiveStream && !needNoStream;
 
-    //const shouldStream = !isDalle3 && !!options.config.stream;
-    const shouldStream = !isDalle3 && !!options.config.stream && !needNoStream;
+    console.log("[StreamCheck]", {
+      model: options.config.model,
+      shortName,
+      optStream: options.config.stream,
+      payloadStream: (requestPayload as any).stream,
+      needNoStream,
+      shouldStream,
+    });
     const controller = new AbortController();
     options.onController?.(controller);
 
