@@ -213,6 +213,7 @@ export class ChatGPTApi implements LLMApi {
 
     // nano 判断（如需用）
     const isGpt5Nano = shortName.startsWith("gpt-5-nano");
+    const isGpt5Family = shortName.startsWith("gpt-5");
     //******************************************************************************************************/
     if (isDalle3) {
       const prompt = getMessageTextContent(
@@ -254,13 +255,7 @@ export class ChatGPTApi implements LLMApi {
         // Please do not ask me why not send max_tokens, no reason, this param is just shit, I dont want to explain anymore.
       };
 
-      if (isGpt5Core) {
-  	// Remove max_tokens if present
-  	delete requestPayload.max_tokens;
-  	// Add max_completion_tokens (or max_completion_tokens if that's what you meant)
-  	requestPayload["max_completion_tokens"] = modelConfig.max_tokens;
-
-      } else if (isO1OrO3) {
+        if (isO1OrO3) {
         // by default the o1/o3 models will not attempt to produce output that includes markdown formatting
         // manually add "Formatting re-enabled" developer message to encourage markdown inclusion in model responses
         // (https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/reasoning?tabs=python-secure#markdown-output)
@@ -272,14 +267,16 @@ export class ChatGPTApi implements LLMApi {
         // o1/o3 uses max_completion_tokens to control the number of tokens (https://platform.openai.com/docs/guides/reasoning#controlling-costs)
         requestPayload["max_completion_tokens"] = modelConfig.max_tokens;
       }
-      // ✅ 强制 gpt-5 / gpt-5-mini 走非流式：删除 stream 字段
-       if (needNoStream) {
-         delete (requestPayload as any).stream;
-       }
+      
+        // ✅ gpt-5*（含 nano）与 o1/o3 统一改用 max_completion_tokens
+        if (isGpt5Family || isO1OrO3) {
+          delete (requestPayload as any).max_tokens;
+          (requestPayload as any).max_completion_tokens = modelConfig.max_tokens;
+        }
 
 
       // add max_tokens to vision model
-      if (visionModel && !isO1OrO3 && ! isGpt5Core) {
+      if (visionModel && !isO1OrO3 && ! isGpt5Family) {
         requestPayload["max_tokens"] = Math.max(modelConfig.max_tokens, 4000);
       }
     }
@@ -287,11 +284,16 @@ export class ChatGPTApi implements LLMApi {
     console.log("[Request] openai payload: ", requestPayload);
     //****************************************************************************************/
     //const shouldStream = !isDalle3 && !!options.config.stream && !needNoStream;
+    if (needNoStream) {
+      delete (requestPayload as any).stream;
+    }
+    
+    // 这里补回
     const effectiveStream =
       "stream" in (requestPayload as any)
-      ? !!(requestPayload as any).stream
-      : !!options.config.stream;
-
+        ? !!(requestPayload as any).stream
+        : !!options.config.stream;
+    
     const shouldStream = !isDalle3 && effectiveStream && !needNoStream;
 
     console.log("[StreamCheck]", {
