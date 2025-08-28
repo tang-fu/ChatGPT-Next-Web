@@ -200,8 +200,20 @@ export class ChatGPTApi implements LLMApi {
       options.config.model.startsWith("o1") ||
       options.config.model.startsWith("o3") ||
       options.config.model.startsWith("o4-mini");
-    const isGpt5 =  options.config.model.startsWith("gpt-5");
-    const needNoStream = /^(gpt-5|gpt-5-mini)$/.test(options.config.model.toLowerCase());
+    //**********************************************修改部分***********************************************/
+    const modelName = options.config.model.toLowerCase().trim();
+    const shortName = modelName
+      .replace(/@.+$/, "")                  // 去掉 @azure-deploy 等
+      .replace(/:(latest|preview)$/, "")    // 去掉 :latest
+      .replace(/-(latest|preview|\d{4}-\d{2}-\d{2})$/, ""); // 去掉 -latest / -2025-05-27
+
+    // 仅这两种“禁流”
+    const isGpt5Core = shortName === "gpt-5" || shortName === "gpt-5-mini";
+    const needNoStream = isGpt5Core;
+
+    // nano 判断（如需用）
+    const isGpt5Nano = shortName.startsWith("gpt-5-nano");
+    //******************************************************************************************************/
     if (isDalle3) {
       const prompt = getMessageTextContent(
         options.messages.slice(-1)?.pop() as any,
@@ -232,7 +244,9 @@ export class ChatGPTApi implements LLMApi {
         messages,
         stream: options.config.stream,
         model: modelConfig.model,
-        temperature: (!isO1OrO3 && !isGpt5) ? modelConfig.temperature : 1,
+        //*****************************************修改部分*******************************************/
+        temperature: (!isO1OrO3 && !isGpt5Core) ? modelConfig.temperature : 1,
+        //****************************************************************************************/
         presence_penalty: !isO1OrO3 ? modelConfig.presence_penalty : 0,
         frequency_penalty: !isO1OrO3 ? modelConfig.frequency_penalty : 0,
         top_p: !isO1OrO3 ? modelConfig.top_p : 1,
@@ -240,7 +254,7 @@ export class ChatGPTApi implements LLMApi {
         // Please do not ask me why not send max_tokens, no reason, this param is just shit, I dont want to explain anymore.
       };
 
-      if (isGpt5) {
+      if (isGpt5Core) {
   	// Remove max_tokens if present
   	delete requestPayload.max_tokens;
   	// Add max_completion_tokens (or max_completion_tokens if that's what you meant)
@@ -265,14 +279,29 @@ export class ChatGPTApi implements LLMApi {
 
 
       // add max_tokens to vision model
-      if (visionModel && !isO1OrO3 && ! isGpt5) {
+      if (visionModel && !isO1OrO3 && ! isGpt5Core) {
         requestPayload["max_tokens"] = Math.max(modelConfig.max_tokens, 4000);
       }
     }
 
     console.log("[Request] openai payload: ", requestPayload);
+    //****************************************************************************************/
+    //const shouldStream = !isDalle3 && !!options.config.stream && !needNoStream;
+    const effectiveStream =
+      "stream" in (requestPayload as any)
+      ? !!(requestPayload as any).stream
+      : !!options.config.stream;
 
-    const shouldStream = !isDalle3 && !!options.config.stream && !needNoStream;
+    const shouldStream = !isDalle3 && effectiveStream && !needNoStream;
+
+    console.log("[StreamCheck]", {
+      model: options.config.model,
+      shortName,
+      optStream: options.config.stream,
+      payloadStream: (requestPayload as any).stream,
+      needNoStream,
+      shouldStream,
+    });
     const controller = new AbortController();
     options.onController?.(controller);
 
