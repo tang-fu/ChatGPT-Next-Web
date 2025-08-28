@@ -201,7 +201,7 @@ export class ChatGPTApi implements LLMApi {
       options.config.model.startsWith("o3") ||
       options.config.model.startsWith("o4-mini");
     const isGpt5 =  options.config.model.startsWith("gpt-5");
-    const needNoStream = /^gpt-5($|-mini\b)/.test(options.config.model);
+    const needNoStream = /^(gpt-5|gpt-5-mini)$/.test(options.config.model.toLowerCase());
     if (isDalle3) {
       const prompt = getMessageTextContent(
         options.messages.slice(-1)?.pop() as any,
